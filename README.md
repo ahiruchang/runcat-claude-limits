@@ -5,12 +5,9 @@ that shows your Claude Code rate-limit lanes — the rolling **5-hour** window, 
 **weekly (all-models)** window, and the **model-scoped weekly** window (e.g.
 `Fable`) — each with its reset time, on a menu-bar card.
 
-```
-Claude Code
-  5h:    41%  ⟳7/20 16:50
-  7d:    16%  ⟳7/26 11:00
-  Fable: 28%  ⟳7/26 11:00
-```
+<p align="center">
+  <img src="docs/screenshot.png" alt="RunCat Neo menu showing a CPU card and the Claude Code limits card (5h / 7d / Fable with reset times)" width="360">
+</p>
 
 Lanes are discovered **dynamically** from the usage API's `limits[]` array, so no
 model name is hardcoded: the top-model weekly lane follows whatever it is called,
