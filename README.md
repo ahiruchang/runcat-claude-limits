@@ -72,8 +72,9 @@ computed from `used% ÷ (elapsed ÷ window length)`, using each lane's window si
    **Add JSON Source**, and choose `~/.claude/runcat-claude-limits.json`.
 4. Use Claude Code — the card updates each turn.
 
-If the card shows `⚠️ usage unavailable` (or the cache reports `"err": "...401..."`),
-your CLI token has expired: run `claude auth login`.
+If the card shows an error such as `auth expired — run: claude auth login`, your
+CLI token has expired: run `claude auth login`. Error cards distinguish the cause —
+`auth expired` (401), `rate limited` (429), and `offline — network error`.
 
 ## Configuration (environment variables)
 
@@ -98,9 +99,11 @@ your CLI token has expired: run `claude auth login`.
   while you use the CLI. If the CLI sits idle long enough for the token to expire,
   the usage fetch starts returning 401. Rather than passing the last (now stale)
   numbers off as current, once the fetch has been failing for `RUNCAT_STALE_SEC`
-  the card switches to an explicit error — `⚠️ usage unavailable — run: claude
-  auth login` — and the footer shows when data was last actually fresh. Live
-  `statusLine` runs still show 5h / 7d from stdin. `claude auth login` restores it.
+  the card switches to an explicit error card whose message and icon reflect the
+  cause — **auth expired** (`run: claude auth login`, 401), **rate limited** (429),
+  or **offline** (network error) — with the footer showing when data was last
+  actually fresh. Live `statusLine` runs still show 5h / 7d from stdin.
+  `claude auth login` restores an expired token.
 - **"Last updated".** RunCat renders `lastUpdatedDate` as a relative time and does
   not tick it live, so it only refreshes when the card re-reads the file.
 

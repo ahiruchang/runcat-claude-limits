@@ -62,6 +62,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -267,9 +268,19 @@ if not FABLE_OFF and (time.time() - cache.get("fetched_at", 0)) > REFRESH:
                     new["ok"] = True
                     new["ok_at"] = time.time()  # last successful fetch — drives staleness
                     new.pop("err", None)
+                    new.pop("err_kind", None)
+            except urllib.error.HTTPError as e:
+                new["ok"] = False
+                new["err_kind"] = {401: "unauthorized", 429: "rate_limited"}.get(e.code, "http")
+                new["err"] = f"HTTP {e.code}"
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                new["ok"] = False
+                new["err_kind"] = "offline"
+                new["err"] = f"network: {getattr(e, 'reason', e)}"
             except Exception as e:
                 new["ok"] = False
-                new["err"] = f"{type(e).__name__}: {str(e)[:120]}"
+                new["err_kind"] = "error"
+                new["err"] = type(e).__name__
             cache = new
             try:
                 tmp = CACHE.with_suffix(".tmp")
@@ -337,18 +348,23 @@ if metrics:
     }
     stdout_line = "  ".join(f"{m['title']} {m['formattedValue'].split(' ')[0]}" for m in metrics)
 else:
-    # Nothing fresh to show → explicit error card (don't pass stale data off as current).
-    err = str(cache.get("err") or "no usage data")
-    hint = "run: claude auth login" if "401" in err else err
+    # Nothing fresh to show → explicit error card, categorised by failure cause.
+    ERR_DISPLAY = {
+        "unauthorized": ("lock.trianglebadge.exclamationmark", "auth expired — run: claude auth login"),
+        "rate_limited": ("hourglass", "rate limited — retrying"),
+        "offline": ("wifi.slash", "offline — network error"),
+        "http": ("exclamationmark.triangle", f"API error ({cache.get('err') or 'HTTP'})"),
+    }
+    symbol, msg = ERR_DISPLAY.get(cache.get("err_kind"), ("exclamationmark.triangle", "usage unavailable"))
     snapshot = {
         "title": "Claude Code",
-        "symbol": "exclamationmark.triangle",
-        "metrics": [{"title": "⚠️", "formattedValue": f"usage unavailable — {hint}"}],
+        "symbol": symbol,
+        "metrics": [{"title": "⚠️", "formattedValue": msg}],
         # last time we actually had good data (honest age), or now if never.
         "lastUpdatedDate": (datetime.fromtimestamp(ok_at, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                             if ok_at else now_iso),
     }
-    stdout_line = f"Claude Code: usage unavailable ({hint})"
+    stdout_line = f"Claude Code: {msg}"
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 fd2, tmp2 = tempfile.mkstemp(prefix=".runcat-", dir=str(OUT.parent))
