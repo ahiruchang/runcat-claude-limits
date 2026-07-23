@@ -72,8 +72,8 @@ computed from `used% ÷ (elapsed ÷ window length)`, using each lane's window si
    **Add JSON Source**, and choose `~/.claude/runcat-claude-limits.json`.
 4. Use Claude Code — the card updates each turn.
 
-If the card only shows 5h / 7d (no scoped lane) and the cache reports
-`"err": "...401..."`, your CLI token is stale: run `claude auth login`.
+If the card shows `⚠️ usage unavailable` (or the cache reports `"err": "...401..."`),
+your CLI token has expired: run `claude auth login`.
 
 ## Configuration (environment variables)
 
@@ -81,6 +81,7 @@ If the card only shows 5h / 7d (no scoped lane) and the cache reports
 |----------|---------|---------|
 | `RUNCAT_OUT_FILE` | `~/.claude/runcat-claude-limits.json` | Output path RunCat reads |
 | `RUNCAT_REFRESH_SEC` | `300` | Min seconds between OAuth API calls (≥180 recommended) |
+| `RUNCAT_STALE_SEC` | `900` | Show an error card once the OAuth fetch has been failing for this long |
 | `RUNCAT_USER_AGENT` | `claude-cli/<version> (external, cli)` | Override the API User-Agent |
 | `RUNCAT_FABLE_OFF` | unset | `1` = skip the API call (stdin 5h/7d only) |
 | `RUNCAT_DEBUG` | unset | `1` = dump the raw OAuth response to `…-oauth-debug.json` |
@@ -93,10 +94,13 @@ If the card only shows 5h / 7d (no scoped lane) and the cache reports
 - **Rate limits.** The endpoint 429s aggressively; keep `RUNCAT_REFRESH_SEC` at
   180 s or more. The default User-Agent mimics the CLI to avoid an even stricter
   bucket.
-- **Token freshness.** The OAuth token is refreshed by Claude Code while you use
-  the CLI. If the CLI sits idle long enough for the token to expire, the
-  scoped-lane value freezes until the next CLI use (5h / 7d still update from
-  stdin).
+- **Token freshness & staleness.** The OAuth token is refreshed by Claude Code
+  while you use the CLI. If the CLI sits idle long enough for the token to expire,
+  the usage fetch starts returning 401. Rather than passing the last (now stale)
+  numbers off as current, once the fetch has been failing for `RUNCAT_STALE_SEC`
+  the card switches to an explicit error — `⚠️ usage unavailable — run: claude
+  auth login` — and the footer shows when data was last actually fresh. Live
+  `statusLine` runs still show 5h / 7d from stdin. `claude auth login` restores it.
 - **"Last updated".** RunCat renders `lastUpdatedDate` as a relative time and does
   not tick it live, so it only refreshes when the card re-reads the file.
 

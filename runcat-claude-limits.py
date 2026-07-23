@@ -73,6 +73,7 @@ CACHE = CLAUDE_DIR / f"{BASE}-cache.json"
 LOCK = CLAUDE_DIR / f".{BASE}.lock"
 DEBUG = CLAUDE_DIR / f"{BASE}-oauth-debug.json"
 REFRESH = int(os.environ.get("RUNCAT_REFRESH_SEC", "300"))
+STALE_AFTER = int(os.environ.get("RUNCAT_STALE_SEC", "900"))  # error card if the API hasn't succeeded within this
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 FABLE_OFF = os.environ.get("RUNCAT_FABLE_OFF") == "1"
 DEBUG_ON = os.environ.get("RUNCAT_DEBUG") == "1"
@@ -264,6 +265,7 @@ if not FABLE_OFF and (time.time() - cache.get("fetched_at", 0)) > REFRESH:
                     if got_lanes:
                         new["lanes"] = got_lanes
                     new["ok"] = True
+                    new["ok_at"] = time.time()  # last successful fetch — drives staleness
                     new.pop("err", None)
             except Exception as e:
                 new["ok"] = False
@@ -288,6 +290,10 @@ cached_lanes = cache.get("lanes")
 if not isinstance(cached_lanes, list):
     cached_lanes = []
 
+ok_at = cache.get("ok_at")
+api_stale = (ok_at is None) or (time.time() - ok_at > STALE_AFTER)
+now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 # ---------- build RunCat card ----------
 def stdin_overlay(kind):
@@ -302,7 +308,10 @@ def stdin_overlay(kind):
 metrics = []
 avail = []
 
-if cached_lanes:
+# Cached (API) lanes are trustworthy only while the API is fresh. Once the fetch
+# has been failing for RUNCAT_STALE_SEC, drop them rather than show days-old
+# numbers as current; stdin lanes (5h/7d), when present, stay fresh.
+if cached_lanes and not api_stale:
     for lane in cached_lanes:
         ov = stdin_overlay(lane.get("kind"))
         pct, reset = ov if ov else (lane.get("pct"), lane.get("reset"))
@@ -311,7 +320,6 @@ if cached_lanes:
             metrics.append(m)
             avail.append(pct)
 else:
-    # No API data yet (first run / offline) — show whatever stdin provides.
     for title, pct, reset, kind in (("5h", sin_five_pct, sin_five_reset, "session"),
                                     ("7d", sin_seven_pct, sin_seven_reset, "weekly_all")):
         m = row(title, pct, reset, kind)
@@ -319,14 +327,28 @@ else:
             metrics.append(m)
             avail.append(pct)
 
-snapshot = {
-    "title": "Claude Code",
-    "symbol": "staroflife",
-    "metrics": metrics,
-    "lastUpdatedDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-}
-if avail:
-    snapshot["metricsBarValue"] = f"{max(avail):g}%"  # most-constraining lane
+if metrics:
+    snapshot = {
+        "title": "Claude Code",
+        "symbol": "staroflife",
+        "metrics": metrics,
+        "lastUpdatedDate": now_iso,
+        "metricsBarValue": f"{max(avail):g}%",  # most-constraining lane
+    }
+    stdout_line = "  ".join(f"{m['title']} {m['formattedValue'].split(' ')[0]}" for m in metrics)
+else:
+    # Nothing fresh to show → explicit error card (don't pass stale data off as current).
+    err = str(cache.get("err") or "no usage data")
+    hint = "run: claude auth login" if "401" in err else err
+    snapshot = {
+        "title": "Claude Code",
+        "symbol": "exclamationmark.triangle",
+        "metrics": [{"title": "⚠️", "formattedValue": f"usage unavailable — {hint}"}],
+        # last time we actually had good data (honest age), or now if never.
+        "lastUpdatedDate": (datetime.fromtimestamp(ok_at, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                            if ok_at else now_iso),
+    }
+    stdout_line = f"Claude Code: usage unavailable ({hint})"
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 fd2, tmp2 = tempfile.mkstemp(prefix=".runcat-", dir=str(OUT.parent))
@@ -336,4 +358,4 @@ os.replace(tmp2, OUT)
 
 
 # ---------- terminal status line ----------
-print("  ".join(f"{m['title']} {m['formattedValue'].split(' ')[0]}" for m in metrics) or "Claude Code")
+print(stdout_line or "Claude Code")
