@@ -14,6 +14,17 @@ model name is hardcoded: the top-model weekly lane follows whatever it is called
 and extra scoped lanes (Opus / Sonnet / …) appear automatically if your account
 has them.
 
+Each lane also carries a **burn-rate** indicator — 🔥`<n>%` — the pace at which
+you're spending the quota, projected to the end of the window. `100%` means you
+will finish exactly at the limit; `200%` means that at the current pace you would
+need twice the quota (e.g. 40% used one hour into a 5-hour window). It is
+computed from `used% ÷ (elapsed ÷ window length)`, using each lane's window size
+(5h for the session lane, 7d for the weekly lanes).
+
+```
+5h: 40% (🔥200%)  ⟳7/20 16:50
+```
+
 ## How it works
 
 - When run as a Claude Code `statusLine` command, the script reads the

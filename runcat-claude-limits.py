@@ -16,8 +16,8 @@
 """
 runcat-claude-limits — RunCat Neo Custom Metrics source for Claude Code limits.
 
-Shows every rate-limit lane the account exposes, each with its reset time, on a
-RunCat Neo card. Lanes are discovered DYNAMICALLY from the usage API's `limits[]`
+Shows every rate-limit lane the account exposes, each with its reset time and a
+burn-rate (pace) indicator, on a RunCat Neo card. Lanes are discovered DYNAMICALLY from the usage API's `limits[]`
 array — nothing is hardcoded to a specific model name, so the top-model weekly
 lane follows whatever it is called (e.g. "Fable"), and any additional scoped
 lanes (Opus / Sonnet / …) appear automatically if the account has them.
@@ -81,6 +81,9 @@ DEBUG_ON = os.environ.get("RUNCAT_DEBUG") == "1"
 # labelled dynamically from scope.model.display_name.
 KIND_LABELS = {"session": "5h", "weekly_all": "7d"}
 
+# Window length per lane kind — used for the burn-rate (pace) indicator.
+LANE_SECONDS = {"session": 5 * 3600, "weekly_all": 7 * 86400, "weekly_scoped": 7 * 86400}
+
 
 # ---------- stdin payload (Claude Code statusLine) ----------
 try:
@@ -138,10 +141,34 @@ def fmt_reset(v):
         return None
 
 
-def row(title, pct, reset_val):
+def burn_rate(pct, reset_val, kind):
+    """Pace indicator: projected end-of-window usage as a % of the quota.
+    100% = exactly on pace; 200% = burning twice as fast as sustainable."""
+    dur = LANE_SECONDS.get(kind)
+    if dur is None or pct is None:
+        return None
+    try:
+        if isinstance(reset_val, (int, float)):
+            reset_ts = float(reset_val)
+        else:
+            reset_ts = datetime.fromisoformat(str(reset_val).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+    elapsed = dur - (reset_ts - time.time())
+    if elapsed <= 0:  # window just started / clock skew — pace not meaningful yet
+        return None
+    frac = min(elapsed / dur, 1.0)
+    return pct / frac
+
+
+def row(title, pct, reset_val, kind=None):
     if pct is None:
         return None
     label = f"{pct:g}%"
+    b = burn_rate(pct, reset_val, kind)
+    if b is not None:
+        bi = round(b)
+        label += f" (🔥{'999+' if bi > 999 else bi}%)"
     rl_ = fmt_reset(reset_val)
     if rl_:
         label += f"  ⟳{rl_}"
@@ -279,14 +306,15 @@ if cached_lanes:
     for lane in cached_lanes:
         ov = stdin_overlay(lane.get("kind"))
         pct, reset = ov if ov else (lane.get("pct"), lane.get("reset"))
-        m = row(lane.get("title") or lane.get("kind") or "limit", pct, reset)
+        m = row(lane.get("title") or lane.get("kind") or "limit", pct, reset, lane.get("kind"))
         if m:
             metrics.append(m)
             avail.append(pct)
 else:
     # No API data yet (first run / offline) — show whatever stdin provides.
-    for title, pct, reset in (("5h", sin_five_pct, sin_five_reset), ("7d", sin_seven_pct, sin_seven_reset)):
-        m = row(title, pct, reset)
+    for title, pct, reset, kind in (("5h", sin_five_pct, sin_five_reset, "session"),
+                                    ("7d", sin_seven_pct, sin_seven_reset, "weekly_all")):
+        m = row(title, pct, reset, kind)
         if m:
             metrics.append(m)
             avail.append(pct)
